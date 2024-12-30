@@ -7,9 +7,8 @@ use log::warn;
 use rootasrole_core::{database::structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}, util::parse_capset_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sha2::Digest;
 
-use crate::deploy::{self, enforce_policy, remove_policy};
+use crate::deploy::{enforce_policy, remove_policy};
 
 pub(crate) struct Capable {
     command: Vec<String>,
@@ -159,38 +158,24 @@ impl BitOrAssign for Policy {
 
 impl Policy {
 
-    pub fn get_username(playbook: &str, task: &str) -> String {
-        let mut hasher = sha2::Sha224::new();
-        hasher.update(playbook.as_bytes());
-        hasher.update(task.as_bytes());
-        let hash = hasher.finalize();
-        // transform to string
-        format!("rar_{}",hex::encode(hash))
-    }
 
 
-
-    pub(crate) fn apply(&self, playbook: &str, task :&str) -> anyhow::Result<()> {
+    pub(crate) fn apply(&self, username :&str) -> anyhow::Result<()> {
         //TODO: apply the policy
 
         //hash playbook+task in sha224
         
-        enforce_policy(&Self::get_username(playbook, task), self)
+        enforce_policy(username, self)
     }
 
-    pub(crate) fn remove(&self, playbook: &str, task :&str) -> anyhow::Result<()> {
-        remove_policy(&Self::get_username(playbook, task), self)
-    }
-    
-    pub(crate) fn is_default(&self) -> bool {
-        self.capabilities.is_empty() && self.files.is_empty() && self.dbus.is_empty()
+    pub(crate) fn remove(&self, username :&str) -> anyhow::Result<()> {
+        remove_policy(&username, self)
     }
 
-    pub fn to_stask(&self, playbook: &str, task: &str) -> STask {
-        let mut stask = STask::new(IdTask::Name(task.to_string()), Weak::new());
-        let username = Self::get_username(playbook, task);
-        stask.cred.setuid = Some(SActorType::Name(username.clone()));
-        stask.cred.setgid = Some(SGroups::Single(SActorType::Name(username.clone())));
+    pub fn to_stask(&self, username: &str, task: Option<&str>) -> STask {
+        let mut stask = STask::new(IdTask::Name(task.unwrap_or(username).to_string()), Weak::new());
+        stask.cred.setuid = Some(SActorType::Name(username.to_string()));
+        stask.cred.setgid = Some(SGroups::Single(SActorType::Name(username.to_string())));
         stask.cred.capabilities = self.to_scapabilities();
         stask.cred._extra_fields.insert("files".to_string(), self.to_sfiles());
         stask.cred._extra_fields.insert("dbus".to_string(), self.to_sdbus());
@@ -257,8 +242,8 @@ impl Capable {
         let cmd = std::process::Command::new("capable")
             .args(&self.command)
             .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
             .output()?;
         self.failed = !cmd.status.success();
         if !self.is_failed() {

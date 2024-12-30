@@ -12,8 +12,8 @@ use std::{
 use log::debug;
 use nix::unistd::{Uid, User};
 use posix_acl::{PosixACL, ACL_EXECUTE, ACL_READ, ACL_WRITE};
-use rootasrole_core::database::structs::{SConfig, SCredentials};
-use sxd_document::{dom::ChildOfRoot, writer::{format_document, Writer}};
+use rootasrole_core::database::structs::{SActorType, SConfig, SCredentials};
+use sxd_document::writer::format_document;
 
 use crate::capable::Policy;
 
@@ -205,18 +205,10 @@ impl PolkitPolicyWorker {
         }
     }
 
-    fn open_or_create<P: AsRef<Path>>(path: P) -> io::Result<File> {
-        if !path.as_ref().exists() {
-            File::create(path)
-        } else {
-            File::open(path)
-        }
-    }
-
     pub(crate) fn add_policy(&self, user: &str, dbus_permissions: &[&str]) -> io::Result<()> {
         //if file exists 
-        let mut policy: PolkitPolicy = if self.rules_folder.join("rootasrole.json").exists() {
-            serde_json::from_reader(File::open(self.rules_folder.join("rootasrole.json"))?)?
+        let mut policy: PolkitPolicy = if self.get_policy_file_path().exists() {
+            serde_json::from_reader(File::open(self.get_policy_file_path())?)?
         } else {
             PolkitPolicy::new()
         };
@@ -225,11 +217,15 @@ impl PolkitPolicyWorker {
             .get_mut(user)
             .get_or_insert(&mut HashSet::new())
             .extend(permissions);
-        let writer = File::create(self.rules_folder.join("rootasrole.json"))?;
+        let writer = File::create(self.get_policy_file_path())?;
         serde_json::to_writer(writer, &policy)?;
         Ok(())
     }
 
+    pub(crate) fn get_policy_file_path(&self) -> PathBuf {
+        self.rules_folder.join("rootasrole.json")
+    }
+    
     pub(crate) fn check_policy(&self, user: &str, action: &str) -> anyhow::Result<bool> {
         let policy: PolkitPolicy = self.polkit_policy()?;
         if let Some(actions) = policy.get(user) {
@@ -240,7 +236,7 @@ impl PolkitPolicyWorker {
 
     fn polkit_policy(&self) -> anyhow::Result<HashMap<String, HashSet<String>>> {
         Ok(serde_json::from_reader(File::open(
-            self.rules_folder.join("rootasrole.json"),
+            self.get_policy_file_path(),
         )?)?)
     }
 
@@ -256,7 +252,7 @@ impl PolkitPolicyWorker {
     fn del_policy(&self, username: &str) -> anyhow::Result<()> {
         let mut policy: PolkitPolicy = self.polkit_policy()?;
         policy.remove(username);
-        let writer = File::create(self.rules_folder.join("rootasrole.json"))?;
+        let writer = File::create(self.get_policy_file_path())?;
         serde_json::to_writer(writer, &policy)?;
         Ok(())
     }
@@ -320,8 +316,33 @@ pub(crate) fn setup_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Resu
     builder.enforce()?;
     Ok(())
 }
+
+pub(crate) fn remove_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Result<()> {
+    let dbus_policy_file = DBusPolicyBuilder::new().rootasrole_folder();
+    fs::remove_dir_all(dbus_policy_file)?;
+    let polkit_policy = PolkitPolicyWorker::new();
+    for role in &config.as_ref().borrow().roles {
+        let role = role.as_ref().borrow();
+        for task in &role.tasks {
+            let task = task.as_ref().borrow();
+            let creds = &task.cred;
+            match creds.setuid.as_ref() {
+                Some(SActorType::Name(username)) => {
+                    if username.starts_with("rar_") || username.starts_with("gsr_") {
+                        let user = User::from_name(username).unwrap().unwrap();
+                        polkit_policy.del_policy(username).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                        remove_acl(creds, user)?;
+                        userdel(username)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
 //
-pub(crate) fn enforce_policy(username: &String, policy: &Policy) -> anyhow::Result<()> {
+pub(crate) fn enforce_policy(username: &str, policy: &Policy) -> anyhow::Result<()> {
     let user = useradd(username)?;
     for (path, permission) in &policy.files {
         set_acl(&user.uid, path, &permission.to_string())?;
@@ -341,7 +362,7 @@ pub(crate) fn enforce_policy(username: &String, policy: &Policy) -> anyhow::Resu
     Ok(())
 }
 
-pub(crate) fn remove_policy(username: &String, policy: &Policy) -> anyhow::Result<()> {
+pub(crate) fn remove_policy(username: &str, policy: &Policy) -> anyhow::Result<()> {
     let user = User::from_name(username)?
         .expect(format!("User {} wasn't created correctly", username).as_str());
     for (path, _) in &policy.files {
@@ -357,34 +378,12 @@ pub(crate) fn remove_policy(username: &String, policy: &Policy) -> anyhow::Resul
     Ok(())
 }
 
-pub(crate) fn remove_rootasrole_conf(config: &Rc<RefCell<SConfig>>) -> Result<(), Error> {
-    // rm -rf /etc/dbus-1/system.d/rootasrole.conf
-    let dbus_policy_file = DBusPolicyBuilder::find_datadir().unwrap();
-    let _ = fs::remove_file(dbus_policy_file);
-    // systemctl restart dbus
-    DBusPolicyBuilder::reload_dbus()?;
-    for role in &config.as_ref().borrow().roles {
-        let role = role.as_ref().borrow();
-        let r_name = &role.name;
-        for task in &role.tasks {
-            let task = task.as_ref().borrow();
-            let username = format!("{}-{}", r_name, &task.name);
-            if let Ok(Some(user)) = User::from_name(&username) {
-                let cred = &task.cred;
-                remove_acl(cred, user)?;
-                userdel(&username)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 fn userdel(username: &str) -> Result<(), Error> {
     Command::new("userdel").arg("-r").arg(username).status()?;
     Ok(())
 }
 
-fn useradd(username: &String) -> Result<User, Error> {
+fn useradd(username: &str) -> Result<User, Error> {
     if let Some(user) = User::from_name(username)? {
         debug!("User {} already exists", username);
         Ok(user)
