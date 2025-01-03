@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, ops::{BitOr, BitOrAssign}, path::PathBuf, rc::Weak, str::FromStr
+    collections::HashMap, ops::{BitOr, BitOrAssign}, rc::Weak, str::FromStr
 };
 
 use bitflags::bitflags;
@@ -7,6 +7,7 @@ use log::warn;
 use rootasrole_core::{database::structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}, util::parse_capset_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use tempfile::{Builder, NamedTempFile};
 
 use crate::deploy::{enforce_policy, remove_policy};
 
@@ -14,7 +15,7 @@ pub(crate) struct Capable {
     command: Vec<String>,
     ran: bool,
     failed: bool,
-    tmp_file: PathBuf,
+    tmp_file: NamedTempFile,
     pub last_stdout: String,
     pub last_stderr: String,
 }
@@ -216,12 +217,13 @@ impl Policy {
 
 impl Capable {
     pub(crate) fn new(mut command: Vec<String>) -> Self {
-        let tmp_file = tempfile::tempdir().expect("Failed to create temporary file").into_path().join("gensr");
+        let tmp_file = Builder::new().keep(true).tempfile().unwrap();
+
         command.splice(0..0, vec![
             "-l".to_string(),
             "error".to_string(),
             "-o".to_string(),
-            tmp_file.to_str().expect("Failed to convert path to string").to_string(),
+            tmp_file.path().to_str().expect("Failed to convert path to string").to_string(),
         ]);
         Capable {
             command,
@@ -251,7 +253,7 @@ impl Capable {
             eprint!("{}", cmd.stderr.iter().map(|b| *b as char).collect::<String>());
         }
         // open the file and parse the policy
-        let policy: Policy = serde_json::de::from_reader(std::fs::File::open(&self.tmp_file)?)?;
+        let policy: Policy = serde_json::de::from_reader(self.tmp_file.as_file())?;
         self.ran = true;
         Ok(policy)
     }
