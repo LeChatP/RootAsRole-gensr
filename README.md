@@ -1,27 +1,20 @@
-# RootAsRole-utils
+# RootAsRole-gensr
 
 ## Overview
 
-RootAsRole-utils is a collection of utilities designed to manage and interact with root roles in a secure and efficient manner. These tools help administrators to handle permissions and roles with ease.
-
-## Features
-
-- Manage root roles and permissions
-- Secure role-based access control
-- Easy integration with existing systems
-- Comprehensive logging and auditing
+RootAsRole-gensr is a tool that generates a policy based on the commands executed by the user. The policy is generated using the RootAsRole model (more information (https://github.com/LeChatP/RootAsRole)[here]). The policy is generated based on the commands executed by the user and the files accessed by the commands.
 
 ## Installation
 
-To install RootAsRole-utils, clone the repository and build the project using Cargo:
+To install RootAsRole-gensr, clone the repository and build the project using Cargo:
 
 ```bash
-git clone https://github.com/lechatp/RootAsRole-utils.git
-cd RootAsRole-utils
+git clone https://github.com/lechatp/RootAsRole-gensr.git
+cd RootAsRole-gensr
 cargo build --release
 ```
 
-## Usage
+## Compilation & Execution
 
 ### Generate/Update a Policy based on a command
 
@@ -45,4 +38,20 @@ To undeploy RootAsRole from the system, use the following command:
 
 ```bash
 cargo run --release --config 'target."cfg(all())".runner="sr"' -- undeploy [--config <config_path>] [--yes]
+```
+
+## Manual Mode
+
+### Build the program
+
+To build the program, use the following command:
+
+```bash
+cargo build --release
+```
+
+### Execute the program
+
+```bash
+./target/release/rootasrole-gensr generate --config <config_path> --playbook <playbook_path> --task <task_name> -- <The command to study>...
 ```
