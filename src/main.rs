@@ -37,7 +37,7 @@ enum Commands {
     /// Generate a policy for a task
     Generate {
         ///TODO: --mode auto|manual
-        #[arg(short, long)]
+        #[arg(short, long, default_value = "auto")]
         mode: Mode,
 
         /// Path to the rootasrole configuration file
