@@ -53,5 +53,5 @@ cargo build --release
 ### Execute the program
 
 ```bash
-./target/release/rootasrole-gensr generate --config <config_path> --playbook <playbook_path> --task <task_name> -- <The command to study>...
+sr ./target/release/gensr generate --config <config_path> --playbook <playbook_path> --task <task_name> -- <The command to study>...
 ```
