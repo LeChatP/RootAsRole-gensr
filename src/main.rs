@@ -1,7 +1,7 @@
 use std::{cell::RefCell, io, path::Path, rc::Rc};
 
 use capable::Policy;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use log::{warn, LevelFilter};
 use nix::unistd::{setuid, Uid};
 use rootasrole_core::database::structs::{SConfig, SRole};
@@ -17,6 +17,12 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Clone, ValueEnum)]
+enum Mode {
+    Auto,
+    Manual,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Test if a user can perform an action
@@ -30,6 +36,10 @@ enum Commands {
     },
     /// Generate a policy for a task
     Generate {
+        ///TODO: --mode auto|manual
+        #[arg(short, long)]
+        mode: Mode,
+
         /// Path to the rootasrole configuration file
         #[arg(short, long)]
         config: Option<String>,
@@ -53,7 +63,8 @@ enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
-    Remove {
+    /// Undeploy rootasrole from the system
+    Undeploy {
         /// Path to the rootasrole configuration file
         #[arg(short, long, default_value = "/etc/security/rootasrole.json")]
         config: String,
@@ -73,8 +84,8 @@ fn main() -> io::Result<()> {
         Commands::Polkit { user, action } => {
             deploy::check_polkit(&action, &user)
         },
-        Commands::Generate { config,
-                playbook, task, command } => {
+        Commands::Generate { mode, config,
+                playbook, task, command } => { // TODO: --mode auto|manual
             let username = match (&playbook, &task) {
                 (Some(playbook), Some(task)) => get_username_ansible(playbook, task),
                 _ => get_username_gensr(&command),
@@ -151,7 +162,7 @@ fn main() -> io::Result<()> {
             let config = &settings.as_ref().borrow().config;
             deploy::setup_role_based_access(config)
         },
-        Commands::Remove { yes, config } => {
+        Commands::Undeploy { yes, config } => {
             prompt_for_confirmation(yes, &config)?;
             let settings = rootasrole_core::get_settings(&config).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
             let config = &settings.as_ref().borrow().config;
