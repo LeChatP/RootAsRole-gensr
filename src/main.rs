@@ -3,7 +3,7 @@ use std::{cell::RefCell, io, path::Path, rc::Rc};
 use capable::Policy;
 use clap::{Parser, Subcommand, ValueEnum};
 use log::{warn, LevelFilter};
-use nix::unistd::{setuid, Uid};
+use nix::unistd::{setgid, setgroups, setuid, Gid, Uid};
 use rootasrole_core::database::structs::{SConfig, SRole};
 use sha2::Digest;
 
@@ -39,7 +39,10 @@ enum Commands {
         ///TODO: --mode auto|manual
         #[arg(short, long, default_value = "auto")]
         mode: Mode,
-
+        /// Fail-then-add: Start with an empty privilege set, add privileges as the command fails, re-execute the command until it succeeds
+        /// If not set, the command will be executed with the full privilege set directly, respecting the Replace-then-record approach
+        #[arg(short, long, default_value = "false")]
+        fail_then_add: bool,
         /// Path to the rootasrole configuration file
         #[arg(short, long)]
         config: Option<String>,
@@ -85,45 +88,38 @@ fn main() -> io::Result<()> {
             deploy::check_polkit(&action, &user)
         },
         Commands::Generate { mode, config,
-                playbook, task, command } => { // TODO: --mode auto|manual
+                playbook, task, command, fail_then_add } => { // TODO: --mode auto|manual
             let username = match (&playbook, &task) {
                 (Some(playbook), Some(task)) => get_username_ansible(playbook, task),
                 _ => get_username_gensr(&command),
             };
-            let mut capable = capable::Capable::new(command.clone());
+            let mut capable = capable::Capable::new(command.clone(), fail_then_add);
             let mut policy = Policy::default();
-            let mut first = true;
-            let mut looping = 0;
-            while !capable.has_ran() || capable.is_failed() {
-                if looping > 0 {
-                    //test as root
-                    eprintln!("Failed to get policy, trying as root");
-                    setuid(Uid::from_raw(0)).unwrap();//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                }
-                let p = capable.run().unwrap();//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                if looping > 0 && capable.is_failed() {
-                    policy.remove(&username).unwrap();
-                    print!("{}", capable.last_stdout);
-                    eprint!("{}", capable.last_stderr);
-                    return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to get policy for {}", match (&playbook, &task) {
-                        (Some(playbook), Some(task)) => format!("playbook : {} and task {}", playbook, task),
-                        _ => format!("command {:?}", &command),
-                    })));
-                } else if p == policy  {
-                    looping += 1;
-                } else {
-                    looping = 0;
-                }
-                if !first {
-                    policy.remove(&username).unwrap()//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                }
-                policy = p;
-                if capable.is_failed() { 
-                    policy.apply(&username).unwrap()//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                }
-                first = false;
-                
+            if fail_then_add {
+                fail_then_add_loop(playbook, &task, command, &username, capable, &mut policy).unwrap();
+            } else {
+                policy = capable.run().unwrap();
             }
+            output_policy(mode, config, task, username, policy)
+        },
+        Commands::Deploy { yes, config } => {
+            prompt_for_confirmation(yes, &config)?;
+            let settings = rootasrole_core::get_settings(&config).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let config = &settings.as_ref().borrow().config;
+            deploy::setup_role_based_access(config)
+        },
+        Commands::Undeploy { yes, config } => {
+            prompt_for_confirmation(yes, &config)?;
+            let settings = rootasrole_core::get_settings(&config).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let config = &settings.as_ref().borrow().config;
+            deploy::remove_role_based_access(config)
+        },
+    }
+}
+
+fn output_policy(mode: Mode, config: Option<String>, task: Option<String>, username: String, policy: Policy) -> Result<(), io::Error> {
+    Ok(match mode {
+        Mode::Auto => {
             let task = Rc::new(RefCell::new(policy.to_stask(&username, task.as_deref())));
             if let Some(config_path) = config {
                 let settings = rootasrole_core::get_settings(&config_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -151,24 +147,51 @@ fn main() -> io::Result<()> {
                 serde_json::to_writer_pretty(&file, &settings).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 file.sync_all().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 //println!("{}", serde_json::to_string_pretty(&settings).unwrap());
-                
+            
             }
-            //
-            Ok(())
         },
-        Commands::Deploy { yes, config } => {
-            prompt_for_confirmation(yes, &config)?;
-            let settings = rootasrole_core::get_settings(&config).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            let config = &settings.as_ref().borrow().config;
-            deploy::setup_role_based_access(config)
-        },
-        Commands::Undeploy { yes, config } => {
-            prompt_for_confirmation(yes, &config)?;
-            let settings = rootasrole_core::get_settings(&config).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            let config = &settings.as_ref().borrow().config;
-            deploy::remove_role_based_access(config)
-        },
+        Mode::Manual => {
+            println!("{}", serde_json::to_string_pretty(&policy).unwrap());
+        }
+    })
+}
+
+fn fail_then_add_loop(playbook: Option<String>, task: &Option<String>, command: Vec<String>, username: &String, mut capable: capable::Capable, policy: &mut Policy) -> Result<(), io::Error> {
+    let mut first = true;
+    let mut looping = 0;
+    // TODO: Fail-then-add don't add additionnal requested privileges if commannd succeed
+    while !capable.has_ran() || capable.is_failed() {
+        if looping > 0 {
+            //test as root
+            eprintln!("Failed to get policy, trying as root");
+            setuid(Uid::from_raw(0)).unwrap();//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            setgid(Gid::from_raw(0)).unwrap();
+            setgroups(&[Gid::from_raw(0)]).unwrap();
+        }
+        let p = capable.run().unwrap();//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        if looping > 0 && capable.is_failed() {
+            policy.remove(username).unwrap();
+            print!("{}", capable.last_stdout);
+            eprint!("{}", capable.last_stderr);
+            return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to get policy for {}", match (&playbook, &task) {
+                (Some(playbook), Some(task)) => format!("playbook : {} and task {}", playbook, task),
+                _ => format!("command {:?}", &command),
+            })));
+        } else if p == *policy  {
+            looping += 1;
+        } else {
+            looping = 0;
+        }
+        if !first {
+            policy.remove(username).unwrap()//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        }
+        *policy = p;
+        if capable.is_failed() { 
+            policy.apply(username, &mut capable).unwrap()//.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        }
+        first = false;
     }
+    Ok(())
 }
 
 fn prompt_for_confirmation(yes: bool, config : &str) -> Result<(), io::Error> {

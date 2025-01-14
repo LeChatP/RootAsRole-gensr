@@ -1,11 +1,13 @@
 use std::{
-    collections::HashMap, ops::{BitOr, BitOrAssign}, rc::Weak, str::FromStr
+    collections::HashMap, ops::{BitOr, BitOrAssign}, path::Display, rc::Weak, str::FromStr
 };
 
 use bitflags::bitflags;
+use capctl::CapSet;
 use log::warn;
+use nix::unistd::{getgroups, getuid, Uid, User};
 use rootasrole_core::{database::structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}, util::parse_capset_iter};
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeMap, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tempfile::{Builder, NamedTempFile};
 
@@ -13,6 +15,8 @@ use crate::deploy::{enforce_policy, remove_policy};
 
 pub(crate) struct Capable {
     command: Vec<String>,
+    previous_caps: CapSet,
+    caps: CapSet,
     ran: bool,
     failed: bool,
     tmp_file: NamedTempFile,
@@ -93,13 +97,45 @@ impl<'de> Deserialize<'de> for Access {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Deserialize, PartialEq, Eq)]
 pub(crate) struct Policy {
+    pub(crate) setuid: Option<u32>,
+    pub(crate) setgid: Option<Vec<u32>>,
     pub(crate) capabilities: Vec<String>,
     pub(crate) files: HashMap<String, Access>,
     pub(crate) dbus: Vec<String>,
 }
 
+impl Serialize for Policy {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let mut map = serializer.serialize_map(Some(5))?;
+        if let Some(setuid) = self.setuid {
+            let uid = Uid::from_raw(setuid);
+            if let Ok(Some(user)) = User::from_uid(uid) {
+                map.serialize_entry("setuid", &user.name)?;
+            } else {
+                map.serialize_entry("setuid", &setuid)?;
+            }
+        }
+        if let Some(setgid) = &self.setgid {
+            let groups: Vec<SActorType> = setgid.iter().map(|g| {
+                let gid = Uid::from_raw(*g);
+                if let Ok(Some(group)) = User::from_uid(gid) {
+                    SActorType::Name(group.name)
+                } else {
+                    SActorType::Id(*g)
+                }
+            }).collect();
+            map.serialize_entry("setgid", &groups)?;
+        }
+        map.serialize_entry("capabilities", &self.capabilities)?;
+        map.serialize_entry("files", &self.files)?;
+        map.serialize_entry("dbus", &self.dbus)?;
+        map.end()
+    }
+}
 
 
 impl Default for Policy {
@@ -108,6 +144,8 @@ impl Default for Policy {
             capabilities: Vec::new(),
             files: HashMap::new(),
             dbus: Vec::new(),
+            setuid: None,
+            setgid: None,
         }
     }
 }
@@ -133,6 +171,8 @@ impl BitOr for Policy {
             capabilities,
             files,
             dbus,
+            setuid: self.setuid.or(rhs.setuid),
+            setgid: self.setgid.or(rhs.setgid),
         }
     }
 }
@@ -161,11 +201,11 @@ impl Policy {
 
 
 
-    pub(crate) fn apply(&self, username :&str) -> anyhow::Result<()> {
+    pub(crate) fn apply(&self, username :&str, capable: &mut Capable) -> anyhow::Result<()> {
         //TODO: apply the policy
 
         //hash playbook+task in sha224
-        
+        capable.add_caps(&parse_capset_iter(self.capabilities.iter().map(|c| c.as_str()))?);
         enforce_policy(username, self)
     }
 
@@ -216,9 +256,8 @@ impl Policy {
 }
 
 impl Capable {
-    pub(crate) fn new(mut command: Vec<String>) -> Self {
+    pub(crate) fn new(mut command: Vec<String>,  fail_then_add : bool) -> Self {
         let tmp_file = Builder::new().keep(true).tempfile().unwrap();
-
         command.splice(0..0, vec![
             "-l".to_string(),
             "error".to_string(),
@@ -226,6 +265,8 @@ impl Capable {
             tmp_file.path().to_str().expect("Failed to convert path to string").to_string(),
         ]);
         Capable {
+            previous_caps: CapSet::empty(),
+            caps: if fail_then_add { CapSet::empty() } else { capctl::bounding::probe() },
             command,
             ran: false,
             failed: false,
@@ -234,6 +275,10 @@ impl Capable {
             last_stderr: String::new(),
         }
     }
+    pub(crate) fn add_caps(&mut self, caps: &CapSet) {
+        self.previous_caps = self.caps;
+        self.caps |= *caps;
+    }
     pub(crate) fn has_ran(&self) -> bool {
         self.ran
     }
@@ -241,8 +286,19 @@ impl Capable {
         self.failed
     }
     pub(crate) fn run(&mut self) -> Result<Policy, anyhow::Error> {
+        let mut binding = self.command.clone();
+        let command = binding.splice(0..0, vec![
+            "-c".to_string(),
+            self.caps.iter().map(|c| c.to_string()).fold(String::new(), |s, c| {
+                if s.is_empty() {
+                    c.to_string()
+                } else {
+                    format!("{},{}", s, c)
+                }
+            })
+        ]);
         let cmd = std::process::Command::new("capable")
-            .args(&self.command)
+            .args(command)
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
@@ -253,7 +309,9 @@ impl Capable {
             eprint!("{}", cmd.stderr.iter().map(|b| *b as char).collect::<String>());
         }
         // open the file and parse the policy
-        let policy: Policy = serde_json::de::from_reader(self.tmp_file.as_file())?;
+        let mut policy: Policy = serde_json::de::from_reader(self.tmp_file.as_file())?;
+        policy.setuid = Some(getuid().as_raw());
+        policy.setgid = Some(getgroups().unwrap().iter().map(|g| g.as_raw()).collect());
         self.ran = true;
         Ok(policy)
     }
