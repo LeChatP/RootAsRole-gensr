@@ -92,10 +92,6 @@ impl Capable {
             .stderr(std::process::Stdio::inherit())
             .output()?;
         self.failed = !cmd.status.success();
-        if !self.is_failed() {
-            print!("{}", cmd.stdout.iter().map(|b| *b as char).collect::<String>());
-            eprint!("{}", cmd.stderr.iter().map(|b| *b as char).collect::<String>());
-        }
         // open the file and parse the policy
         let mut policy: Policy = serde_json::de::from_reader(self.tmp_file.as_file())?;
         policy.current_user_creds();
