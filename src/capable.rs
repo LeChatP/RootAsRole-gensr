@@ -50,16 +50,14 @@ impl Capable {
     pub(crate) fn new(path: Option<PathBuf>, command: Vec<String>,
         fail_then_add : bool) -> anyhow::Result<Self> {
         let mut default = Self::default();
-        let tmp_file = Builder::new().keep(true).tempfile().unwrap();
-        default.command.extend(command);
-        default.tmp_file = tmp_file;
         if let Some(path) = path {
             default.path = Some(path);
         } else if default.path.is_none() {
             return Err(anyhow::anyhow!("capable not found in PATH"));
         }
+        default.command.extend(command);
         if fail_then_add {
-            default.caps = CapSet::empty();
+            default.caps.clear();
         }
         Ok(default)
     }
