@@ -15,7 +15,7 @@ use posix_acl::{PosixACL, ACL_EXECUTE, ACL_READ, ACL_WRITE};
 use rootasrole_core::database::structs::{SActorType, SConfig, SCredentials};
 use sxd_document::writer::format_document;
 
-use crate::capable::Policy;
+use crate::policy::Policy;
 
 struct DBusPolicyBuilder {
     system_config: PathBuf,

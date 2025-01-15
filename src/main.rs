@@ -1,12 +1,13 @@
-use std::{cell::RefCell, io, path::Path, rc::Rc};
+use std::{cell::RefCell, io, path::{Path, PathBuf}, rc::Rc};
 
-use capable::Policy;
+use policy::Policy;
 use clap::{Parser, Subcommand, ValueEnum};
 use log::{warn, LevelFilter};
 use nix::unistd::{setgid, setgroups, setuid, Gid, Uid};
 use rootasrole_core::database::structs::{SConfig, SRole};
 use sha2::Digest;
 
+mod policy;
 mod deploy;
 mod capable;
 
@@ -39,6 +40,9 @@ enum Commands {
         ///TODO: --mode auto|manual
         #[arg(short, long, default_value = "auto")]
         mode: Mode,
+        /// capable path location
+        #[arg(long)]
+        capable: Option<PathBuf>,
         /// Fail-then-add: Start with an empty privilege set, add privileges as the command fails, re-execute the command until it succeeds
         /// If not set, the command will be executed with the full privilege set directly, respecting the Replace-then-record approach
         #[arg(short, long, default_value = "false")]
@@ -88,15 +92,16 @@ fn main() -> io::Result<()> {
             deploy::check_polkit(&action, &user)
         },
         Commands::Generate { mode, config,
-                playbook, task, command, fail_then_add } => { // TODO: --mode auto|manual
+                playbook, task, command, fail_then_add, capable } => { // TODO: --mode auto|manual
             let username = match (&playbook, &task) {
                 (Some(playbook), Some(task)) => get_username_ansible(playbook, task),
                 _ => get_username_gensr(&command),
             };
-            let mut capable = capable::Capable::new(command.clone(), fail_then_add);
+            let mut capable = capable::Capable::builder().fail_then_add(fail_then_add)
+                .command(command).maybe_path(capable).build().unwrap();
             let mut policy = Policy::default();
             if fail_then_add {
-                fail_then_add_loop(playbook, &task, command, &username, capable, &mut policy).unwrap();
+                fail_then_add_loop(playbook, &task, &username, capable, &mut policy).unwrap();
             } else {
                 policy = capable.run().unwrap();
             }
@@ -156,7 +161,7 @@ fn output_policy(mode: Mode, config: Option<String>, task: Option<String>, usern
     })
 }
 
-fn fail_then_add_loop(playbook: Option<String>, task: &Option<String>, command: Vec<String>, username: &String, mut capable: capable::Capable, policy: &mut Policy) -> Result<(), io::Error> {
+fn fail_then_add_loop(playbook: Option<String>, task: &Option<String>, username: &String, mut capable: capable::Capable, policy: &mut Policy) -> Result<(), io::Error> {
     let mut first = true;
     let mut looping = 0;
     // TODO: Fail-then-add don't add additionnal requested privileges if commannd succeed
@@ -175,7 +180,7 @@ fn fail_then_add_loop(playbook: Option<String>, task: &Option<String>, command: 
             eprint!("{}", capable.last_stderr);
             return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to get policy for {}", match (&playbook, &task) {
                 (Some(playbook), Some(task)) => format!("playbook : {} and task {}", playbook, task),
-                _ => format!("command {:?}", &command),
+                _ => format!("the input command"),
             })));
         } else if p == *policy  {
             looping += 1;
