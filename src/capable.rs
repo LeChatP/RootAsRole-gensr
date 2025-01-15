@@ -3,7 +3,7 @@ use std::
 ;
 
 use bon::bon;
-use capctl::CapSet;
+use capctl::{bounding, CapSet};
 use tempfile::{Builder, NamedTempFile};
 
 use crate::policy::Policy;
@@ -28,7 +28,7 @@ impl Default for Capable {
         Capable {
             path : which::which("capable").ok(),
             previous_caps: CapSet::empty(),
-            caps: capctl::bounding::probe(),
+            caps: bounding::probe(),
             command: vec![
                 "-l".to_string(),
                 "error".to_string(),
@@ -62,6 +62,9 @@ impl Capable {
         Ok(default)
     }
     pub(crate) fn add_caps(&mut self, caps: &CapSet) {
+        if caps.issuperset(bounding::probe()) {
+            panic!("Requested capabilities \"{}\" cannot be added due to bounding set restrictions", capset_to_string(&(*caps & !bounding::probe())));
+        }
         self.previous_caps = self.caps;
         self.caps |= *caps;
     }
@@ -75,13 +78,7 @@ impl Capable {
         let mut binding = self.command.clone();
         let command = binding.splice(0..0, vec![
             "-c".to_string(),
-            self.caps.iter().map(|c| c.to_string()).fold(String::new(), |s, c| {
-                if s.is_empty() {
-                    c.to_string()
-                } else {
-                    format!("{},{}", s, c)
-                }
-            })
+            capset_to_string(&self.caps),
         ]);
         let cmd = std::process::Command::new(self.path.as_ref().unwrap().as_os_str())
             .args(command)
@@ -96,4 +93,14 @@ impl Capable {
         self.ran = true;
         Ok(policy)
     }
+}
+
+fn capset_to_string(capset: &CapSet) -> String {
+    capset.iter().map(|c| c.to_string()).fold(String::new(), |s, c| {
+        if s.is_empty() {
+            c.to_string()
+        } else {
+            format!("{},{}", s, c)
+        }
+    })
 }
