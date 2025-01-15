@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::{BitOr, BitOrAssign}, rc::Weak, str::FromSt
 
 use bitflags::bitflags;
 use log::warn;
-use nix::unistd::{Gid, Group, Uid, User};
+use nix::unistd::{getgroups, getuid, Gid, Group, Uid, User};
 use rootasrole_core::{database::structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}, util::parse_capset_iter};
 use serde::{ser::SerializeMap, Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -237,6 +237,11 @@ impl Policy {
 
     fn to_sdbus(&self) -> Value {
         Value::Array(self.dbus.iter().map(|d| Value::String(d.clone())).collect())
+    }
+
+    pub(crate) fn current_user_creds(&mut self) {
+        self.setuid = Some(getuid().as_raw());
+        self.setgid = Some(getgroups().unwrap().iter().map(|g| g.as_raw()).collect());
     }
 
 }

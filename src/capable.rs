@@ -4,7 +4,6 @@ use std::
 
 use bon::bon;
 use capctl::CapSet;
-use nix::unistd::{getgroups, getuid};
 use tempfile::{Builder, NamedTempFile};
 
 use crate::policy::Policy;
@@ -99,8 +98,7 @@ impl Capable {
         }
         // open the file and parse the policy
         let mut policy: Policy = serde_json::de::from_reader(self.tmp_file.as_file())?;
-        policy.setuid = Some(getuid().as_raw());
-        policy.setgid = Some(getgroups().unwrap().iter().map(|g| g.as_raw()).collect());
+        policy.current_user_creds();
         self.ran = true;
         Ok(policy)
     }
