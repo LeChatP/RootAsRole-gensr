@@ -89,7 +89,7 @@ enum Commands {
 
 
 fn main() -> io::Result<()> {
-    //init tracing at DEBUG level
+    #[cfg(debug_assertions)]
     env_logger::builder().default_format().filter_level(LevelFilter::Debug).init();
     let args = Cli::parse();
     match args.command {
