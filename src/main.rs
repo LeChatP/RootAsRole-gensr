@@ -2,9 +2,9 @@ use std::{cell::RefCell, io, path::{Path, PathBuf}, rc::Rc};
 
 use policy::Policy;
 use clap::{Parser, Subcommand, ValueEnum};
-use log::{warn, LevelFilter};
+use log::{debug, warn, LevelFilter};
 use nix::unistd::{setgid, setgroups, setuid, Gid, Uid};
-use rootasrole_core::database::structs::{SConfig, SRole};
+use rootasrole_core::{database::{structs::{SConfig, SRole}, versionning::Versioning}, rc_refcell, SettingsFile};
 use sha2::Digest;
 
 mod policy;
@@ -91,6 +91,8 @@ enum Commands {
 fn main() -> io::Result<()> {
     #[cfg(debug_assertions)]
     env_logger::builder().default_format().filter_level(LevelFilter::Debug).init();
+    #[cfg(not(debug_assertions))]
+    env_logger::builder().default_format().filter_level(LevelFilter::Info).init();
     let args = Cli::parse();
     match args.command {
         Commands::Polkit { user, action } => {
@@ -133,13 +135,12 @@ fn output_policy(mode: Mode, config: Option<String>, task: Option<String>, usern
             let task = Rc::new(RefCell::new(policy.to_stask(&username, task.as_deref())));
             if let Some(config_path) = config {
                 let settings = rootasrole_core::get_settings(&config_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-
                 {
                     let config = rootasrole_core::database::read_json_config(settings.clone(), &config_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                     let mut conf = config.as_ref().borrow_mut();
                     if let Some(role) = conf.role(&username) {
                         if role.as_ref().borrow_mut().tasks.iter().any(|t| {
-                            *t == task
+                            t.as_ref().borrow().name == task.as_ref().borrow().name
                         }) {
                             warn!("Task '{}' already exists in role '{}'", task.as_ref().borrow().name, username);
                         } else {
@@ -154,7 +155,7 @@ fn output_policy(mode: Mode, config: Option<String>, task: Option<String>, usern
                 }
                 // Create a file manually without save_settings
                 let file = std::fs::File::create(&config_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                serde_json::to_writer_pretty(&file, &settings).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                serde_json::to_writer_pretty(&file, &Versioning::new(settings)).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 file.sync_all().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 //println!("{}", serde_json::to_string_pretty(&settings).unwrap());
             
