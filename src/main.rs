@@ -47,6 +47,11 @@ enum Commands {
         /// If not set, the command will be executed with the full privilege set directly, respecting the Replace-then-record approach
         #[arg(short, long, default_value = "false")]
         fail_then_add: bool,
+
+        /// Loop until the command succeed
+        #[arg(short, long, default_value = "false")]
+        no_loop: bool,
+
         /// Path to the rootasrole configuration file
         #[arg(short, long)]
         config: Option<String>,
@@ -92,7 +97,7 @@ fn main() -> io::Result<()> {
             deploy::check_polkit(&action, &user)
         },
         Commands::Generate { mode, config,
-                playbook, task, command, fail_then_add, capable } => { // TODO: --mode auto|manual
+                playbook, task, command, fail_then_add, capable, no_loop} => { // TODO: --mode auto|manual
             let username = match (&playbook, &task) {
                 (Some(playbook), Some(task)) => get_username_ansible(playbook, task),
                 _ => get_username_gensr(&command),
@@ -100,7 +105,7 @@ fn main() -> io::Result<()> {
             let mut capable = capable::Capable::builder().fail_then_add(fail_then_add)
                 .command(command).maybe_path(capable).build().unwrap();
             let mut policy = Policy::default();
-            if fail_then_add {
+            if fail_then_add && !no_loop {
                 fail_then_add_loop(playbook, &task, &username, capable, &mut policy).unwrap();
             } else {
                 policy = capable.run().unwrap();

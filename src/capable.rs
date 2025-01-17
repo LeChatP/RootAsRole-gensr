@@ -4,6 +4,7 @@ use std::
 
 use bon::bon;
 use capctl::{bounding, CapSet};
+use log::debug;
 use tempfile::{Builder, NamedTempFile};
 
 use crate::policy::Policy;
@@ -56,6 +57,7 @@ impl Capable {
             return Err(anyhow::anyhow!("capable not found in PATH"));
         }
         default.command.extend(command);
+        debug!("Command: {:?}", default.command);
         if fail_then_add {
             default.caps.clear();
         }
@@ -75,11 +77,11 @@ impl Capable {
         self.failed
     }
     pub(crate) fn run(&mut self) -> Result<Policy, anyhow::Error> {
-        let mut binding = self.command.clone();
-        let command = binding.splice(0..0, vec![
-            "-c".to_string(),
-            capset_to_string(&self.caps),
-        ]);
+        let mut command = self.command.clone();
+        // prepend -c CAPS to the 
+        command.insert(0, capset_to_string(&self.caps));
+        command.insert(0, "-c".to_string());
+        debug!("Running command: {:?}", command);
         let cmd = std::process::Command::new(self.path.as_ref().unwrap().as_os_str())
             .args(command)
             .stdin(std::process::Stdio::inherit())
