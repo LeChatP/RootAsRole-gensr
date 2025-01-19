@@ -4,7 +4,7 @@ use policy::Policy;
 use clap::{Parser, Subcommand, ValueEnum};
 use log::{debug, warn, LevelFilter};
 use nix::unistd::{setgid, setgroups, setuid, Gid, Uid};
-use rootasrole_core::{database::{structs::{SConfig, SRole}, versionning::Versioning}, rc_refcell, SettingsFile};
+use rootasrole_core::{database::{options::{EnvBehavior, EnvKey, Level, Opt, SAuthentication, SEnvOptions}, structs::{SConfig, SRole}, versionning::Versioning}, rc_refcell, SettingsFile};
 use sha2::Digest;
 
 mod policy;
@@ -61,6 +61,11 @@ enum Commands {
         /// Name of the task to execute
         #[arg(short, long)]
         task: Option<String>,
+
+        /// Whether the password should be supplied.
+        #[clap(default_value = "skip")]
+        password_policy: String,
+
         /// Additional ansible commands
         #[arg(last = true)]
         command: Vec<String>,
@@ -87,6 +92,14 @@ enum Commands {
     },
 }
 
+fn parse_sauthentication(auth: &str) -> anyhow::Result<SAuthentication> {
+    Ok(match auth {
+        "skip" => SAuthentication::Skip,
+        "perform" => SAuthentication::Perform,
+        _ => return Err(anyhow::anyhow!("Only 'skip' and 'perform' are allowed for password_policy")),
+    })
+}
+
 
 fn main() -> io::Result<()> {
     #[cfg(debug_assertions)]
@@ -99,7 +112,7 @@ fn main() -> io::Result<()> {
             deploy::check_polkit(&action, &user)
         },
         Commands::Generate { mode, config,
-                playbook, task, command, fail_then_add, capable, no_loop} => { // TODO: --mode auto|manual
+                playbook, task, command, fail_then_add, capable, no_loop, password_policy} => { // TODO: --mode auto|manual
             let username = match (&playbook, &task) {
                 (Some(playbook), Some(task)) => get_username_ansible(playbook, task),
                 _ => get_username_gensr(&command),
@@ -107,6 +120,7 @@ fn main() -> io::Result<()> {
             let mut capable = capable::Capable::builder().fail_then_add(fail_then_add)
                 .command(command).maybe_path(capable).build().unwrap();
             let mut policy = Policy::default();
+            policy.password_prompt = parse_sauthentication(&password_policy).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
             if fail_then_add && !no_loop {
                 fail_then_add_loop(playbook, &task, &username, capable, &mut policy).unwrap();
             } else {
@@ -133,6 +147,12 @@ fn output_policy(mode: Mode, config: Option<String>, task: Option<String>, usern
     Ok(match mode {
         Mode::Auto => {
             let task = Rc::new(RefCell::new(policy.to_stask(&username, task.as_deref())));
+            let mut options = Opt::new(Level::Task);
+            options.authentication = Some(SAuthentication::Skip);
+            let mut envopt = SEnvOptions::new(EnvBehavior::Delete);
+            envopt.keep = policy.env_vars.keys().map(|k| EnvKey::new(k.clone()).unwrap()).collect();
+            options.env = Some(envopt);
+            task.as_ref().borrow_mut().options = Some(rc_refcell!(options));
             if let Some(config_path) = config {
                 let settings = rootasrole_core::get_settings(&config_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                 {

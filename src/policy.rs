@@ -3,7 +3,7 @@ use std::{collections::HashMap, ops::{BitOr, BitOrAssign}, rc::Weak, str::FromSt
 use bitflags::bitflags;
 use log::warn;
 use nix::unistd::{getgroups, getuid, Gid, Group, Uid, User};
-use rootasrole_core::{database::structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}, util::parse_capset_iter};
+use rootasrole_core::{database::{options::SAuthentication, structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}}, util::parse_capset_iter};
 use serde::{ser::SerializeMap, Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -90,6 +90,8 @@ pub(crate) struct Policy {
     pub(crate) capabilities: Vec<String>,
     pub(crate) files: HashMap<String, Access>,
     pub(crate) dbus: Vec<String>,
+    pub(crate) env_vars: HashMap<String, String>,
+    pub(crate) password_prompt: SAuthentication,
 }
 
 impl Serialize for Policy {
@@ -132,6 +134,8 @@ impl Default for Policy {
             dbus: Vec::new(),
             setuid: None,
             setgid: None,
+            env_vars: HashMap::new(),
+            password_prompt: SAuthentication::Perform,
         }
     }
 }
@@ -153,12 +157,22 @@ impl BitOr for Policy {
         files.extend(rhs.files);
         let mut dbus = self.dbus;
         dbus.extend(rhs.dbus);
+
+        let mut env = self.env_vars;
+        env.extend(rhs.env_vars);
+
+        if self.password_prompt != rhs.password_prompt {
+            warn!("Password prompt mismatch: {:?} vs {:?}", self.password_prompt, rhs.password_prompt);
+        }
+
         Policy {
             capabilities,
             files,
             dbus,
             setuid: self.setuid.or(rhs.setuid),
             setgid: self.setgid.or(rhs.setgid),
+            env_vars: env,
+            password_prompt: self.password_prompt,
         }
     }
 }
