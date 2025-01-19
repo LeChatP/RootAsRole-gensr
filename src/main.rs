@@ -2,7 +2,7 @@ use std::{cell::RefCell, io, path::{Path, PathBuf}, rc::Rc};
 
 use policy::Policy;
 use clap::{Parser, Subcommand, ValueEnum};
-use log::{debug, warn, LevelFilter};
+use log::{warn, LevelFilter};
 use nix::unistd::{setgid, setgroups, setuid, Gid, Uid};
 use rootasrole_core::{database::{options::{EnvBehavior, EnvKey, Level, Opt, SAuthentication, SEnvOptions}, structs::{SConfig, SRole}, versionning::Versioning}, rc_refcell, SettingsFile};
 use sha2::Digest;
