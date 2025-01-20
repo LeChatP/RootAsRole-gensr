@@ -1,6 +1,4 @@
-use std::
-    path::PathBuf
-;
+use std::path::PathBuf;
 
 use bon::bon;
 use capctl::{bounding, CapSet};
@@ -8,7 +6,6 @@ use log::debug;
 use tempfile::{Builder, NamedTempFile};
 
 use crate::policy::Policy;
-
 
 pub(crate) struct Capable {
     path: Option<PathBuf>,
@@ -22,19 +19,22 @@ pub(crate) struct Capable {
     pub last_stderr: String,
 }
 
-
 impl Default for Capable {
     fn default() -> Self {
         let tmp_file = Builder::new().keep(true).tempfile().unwrap();
         Capable {
-            path : which::which("capable").ok(),
+            path: which::which("capable").ok(),
             previous_caps: CapSet::empty(),
             caps: bounding::probe(),
             command: vec![
                 "-l".to_string(),
                 "error".to_string(),
                 "-o".to_string(),
-                tmp_file.path().to_str().expect("Failed to convert path to string").to_string(),
+                tmp_file
+                    .path()
+                    .to_str()
+                    .expect("Failed to convert path to string")
+                    .to_string(),
             ],
             ran: false,
             failed: false,
@@ -48,8 +48,11 @@ impl Default for Capable {
 #[bon]
 impl Capable {
     #[builder]
-    pub(crate) fn new(path: Option<PathBuf>, command: Vec<String>,
-        fail_then_add : bool) -> anyhow::Result<Self> {
+    pub(crate) fn new(
+        path: Option<PathBuf>,
+        command: Vec<String>,
+        fail_then_add: bool,
+    ) -> anyhow::Result<Self> {
         let mut default = Self::default();
         if let Some(path) = path {
             default.path = Some(path);
@@ -65,7 +68,10 @@ impl Capable {
     }
     pub(crate) fn add_caps(&mut self, caps: &CapSet) {
         if caps.issuperset(bounding::probe()) {
-            panic!("Requested capabilities \"{}\" cannot be added due to bounding set restrictions", capset_to_string(&(*caps & !bounding::probe())));
+            panic!(
+                "Requested capabilities \"{}\" cannot be added due to bounding set restrictions",
+                capset_to_string(&(*caps & !bounding::probe()))
+            );
         }
         self.previous_caps = self.caps;
         self.caps |= *caps;
@@ -78,7 +84,7 @@ impl Capable {
     }
     pub(crate) fn run(&mut self) -> Result<Policy, anyhow::Error> {
         let mut command = self.command.clone();
-        // prepend -c CAPS to the 
+        // prepend -c CAPS to the
         command.insert(0, capset_to_string(&self.caps));
         command.insert(0, "-c".to_string());
         debug!("Running command: {:?}", command);
@@ -98,11 +104,14 @@ impl Capable {
 }
 
 fn capset_to_string(capset: &CapSet) -> String {
-    capset.iter().map(|c| c.to_string()).fold(String::new(), |s, c| {
-        if s.is_empty() {
-            c.to_string()
-        } else {
-            format!("{},{}", s, c)
-        }
-    })
+    capset
+        .iter()
+        .map(|c| c.to_string())
+        .fold(String::new(), |s, c| {
+            if s.is_empty() {
+                c.to_string()
+            } else {
+                format!("{},{}", s, c)
+            }
+        })
 }

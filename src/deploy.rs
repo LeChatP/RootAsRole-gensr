@@ -66,24 +66,37 @@ impl DBusPolicyBuilder {
         let doc = package.as_document();
         let root = &doc.root();
         //check if there is already an includedir tag for
-        let includedir_exists = root.children().first().unwrap().element().unwrap().children().into_iter().any(|node| {
-            node.element()
-                .and_then(|element| {
-                    if element.name().local_part() == "includedir" {
-                        element.children().first().and_then(|child| child.text())
-                    } else {
-                        None
-                    }
-                })
-                .map_or(false, |text| {
-                    text.text() == self.rootasrole_folder.to_str().unwrap()
-                })
-        });
+        let includedir_exists = root
+            .children()
+            .first()
+            .unwrap()
+            .element()
+            .unwrap()
+            .children()
+            .into_iter()
+            .any(|node| {
+                node.element()
+                    .and_then(|element| {
+                        if element.name().local_part() == "includedir" {
+                            element.children().first().and_then(|child| child.text())
+                        } else {
+                            None
+                        }
+                    })
+                    .map_or(false, |text| {
+                        text.text() == self.rootasrole_folder.to_str().unwrap()
+                    })
+            });
 
         if !includedir_exists {
             let new_includedir = doc.create_element("includedir");
             new_includedir.append_child(doc.create_text(&self.rootasrole_folder.to_str().unwrap()));
-            root.children().first().unwrap().element().unwrap().append_child(new_includedir);
+            root.children()
+                .first()
+                .unwrap()
+                .element()
+                .unwrap()
+                .append_child(new_includedir);
             debug!("New includedir added");
             let mut writer = BufWriter::new(Vec::new());
             format_document(&doc, &mut writer).unwrap();
@@ -206,7 +219,7 @@ impl PolkitPolicyWorker {
     }
 
     pub(crate) fn add_policy(&self, user: &str, dbus_permissions: &[&str]) -> io::Result<()> {
-        //if file exists 
+        //if file exists
         let mut policy: PolkitPolicy = if self.get_policy_file_path().exists() {
             serde_json::from_reader(File::open(self.get_policy_file_path())?)?
         } else {
@@ -225,7 +238,7 @@ impl PolkitPolicyWorker {
     pub(crate) fn get_policy_file_path(&self) -> PathBuf {
         self.rules_folder.join("rootasrole.json")
     }
-    
+
     pub(crate) fn check_policy(&self, user: &str, action: &str) -> anyhow::Result<bool> {
         let policy: PolkitPolicy = self.polkit_policy()?;
         if let Some(actions) = policy.get(user) {
@@ -330,7 +343,9 @@ pub(crate) fn remove_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Res
                 Some(SActorType::Name(username)) => {
                     if username.starts_with("rar_") || username.starts_with("gsr_") {
                         let user = User::from_name(username).unwrap().unwrap();
-                        polkit_policy.del_policy(username).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                        polkit_policy
+                            .del_policy(username)
+                            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                         remove_acl(creds, user)?;
                         userdel(username)?;
                     }

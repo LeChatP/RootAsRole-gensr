@@ -1,14 +1,27 @@
-use std::{collections::HashMap, ops::{BitOr, BitOrAssign}, rc::Weak, str::FromStr};
+use std::{
+    collections::HashMap,
+    ops::{BitOr, BitOrAssign},
+    rc::Weak,
+    str::FromStr,
+};
 
 use bitflags::bitflags;
 use log::warn;
 use nix::unistd::{getgroups, getuid, Gid, Group, Uid, User};
-use rootasrole_core::{database::{options::SAuthentication, structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior}}, util::parse_capset_iter};
+use rootasrole_core::{
+    database::{
+        options::SAuthentication,
+        structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior},
+    },
+    util::parse_capset_iter,
+};
 use serde::{ser::SerializeMap, Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{capable::Capable, deploy::{enforce_policy, remove_policy}};
-
+use crate::{
+    capable::Capable,
+    deploy::{enforce_policy, remove_policy},
+};
 
 bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,7 +111,8 @@ pub(crate) struct Policy {
 impl Serialize for Policy {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
+        S: serde::Serializer,
+    {
         let mut map = serializer.serialize_map(Some(5))?;
         if let Some(setuid) = self.setuid {
             let uid = Uid::from_raw(setuid);
@@ -109,14 +123,17 @@ impl Serialize for Policy {
             }
         }
         if let Some(setgid) = &self.setgid {
-            let groups: Vec<SActorType> = setgid.iter().map(|g| {
-                let gid = Gid::from_raw(*g);
-                if let Ok(Some(group)) = Group::from_gid(gid) {
-                    SActorType::Name(group.name)
-                } else {
-                    SActorType::Id(*g)
-                }
-            }).collect();
+            let groups: Vec<SActorType> = setgid
+                .iter()
+                .map(|g| {
+                    let gid = Gid::from_raw(*g);
+                    if let Ok(Some(group)) = Group::from_gid(gid) {
+                        SActorType::Name(group.name)
+                    } else {
+                        SActorType::Id(*g)
+                    }
+                })
+                .collect();
             map.serialize_entry("setgid", &groups)?;
         }
         map.serialize_entry("capabilities", &self.capabilities)?;
@@ -125,7 +142,6 @@ impl Serialize for Policy {
         map.end()
     }
 }
-
 
 impl Default for Policy {
     fn default() -> Self {
@@ -163,7 +179,10 @@ impl BitOr for Policy {
         env.extend(rhs.env_vars);
 
         if self.password_prompt != rhs.password_prompt {
-            warn!("Password prompt mismatch: {:?} vs {:?}", self.password_prompt, rhs.password_prompt);
+            warn!(
+                "Password prompt mismatch: {:?} vs {:?}",
+                self.password_prompt, rhs.password_prompt
+            );
         }
 
         Policy {
@@ -199,28 +218,36 @@ impl BitOrAssign for Policy {
 }
 
 impl Policy {
-
-
-
-    pub(crate) fn apply(&self, username :&str, capable: &mut Capable) -> anyhow::Result<()> {
+    pub(crate) fn apply(&self, username: &str, capable: &mut Capable) -> anyhow::Result<()> {
         //TODO: apply the policy
 
         //hash playbook+task in sha224
-        capable.add_caps(&parse_capset_iter(self.capabilities.iter().map(|c| c.as_str()))?);
+        capable.add_caps(&parse_capset_iter(
+            self.capabilities.iter().map(|c| c.as_str()),
+        )?);
         enforce_policy(username, self)
     }
 
-    pub(crate) fn remove(&self, username :&str) -> anyhow::Result<()> {
+    pub(crate) fn remove(&self, username: &str) -> anyhow::Result<()> {
         remove_policy(&username, self)
     }
 
     pub fn to_stask(&self, username: &str, task: Option<&str>) -> STask {
-        let mut stask = STask::new(IdTask::Name(task.unwrap_or(username).to_string()), Weak::new());
+        let mut stask = STask::new(
+            IdTask::Name(task.unwrap_or(username).to_string()),
+            Weak::new(),
+        );
         stask.cred.setuid = Some(SActorType::Name(username.to_string()));
         stask.cred.setgid = Some(SGroups::Single(SActorType::Name(username.to_string())));
         stask.cred.capabilities = self.to_scapabilities();
-        stask.cred._extra_fields.insert("files".to_string(), self.to_sfiles());
-        stask.cred._extra_fields.insert("dbus".to_string(), self.to_sdbus());
+        stask
+            .cred
+            ._extra_fields
+            .insert("files".to_string(), self.to_sfiles());
+        stask
+            .cred
+            ._extra_fields
+            .insert("dbus".to_string(), self.to_sdbus());
         stask.commands.default_behavior = Some(SetBehavior::All);
         stask
     }
@@ -258,5 +285,4 @@ impl Policy {
         self.setuid = Some(getuid().as_raw());
         self.setgid = Some(getgroups().unwrap().iter().map(|g| g.as_raw()).collect());
     }
-
 }
