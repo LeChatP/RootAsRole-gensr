@@ -91,6 +91,7 @@ pub(crate) struct Policy {
     pub(crate) files: HashMap<String, Access>,
     pub(crate) dbus: Vec<String>,
     pub(crate) env_vars: HashMap<String, String>,
+    #[serde(default)]
     pub(crate) password_prompt: SAuthentication,
 }
 
