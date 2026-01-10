@@ -55,3 +55,8 @@ cargo build --release
 ```bash
 sr ./target/release/gensr generate --config <config_path> --playbook <playbook_path> --task <task_name> -- <The command to study>...
 ```
+
+## Algorithms
+
+![](algo1.png)
+![](algo2.png)
