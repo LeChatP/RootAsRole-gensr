@@ -231,10 +231,10 @@ fn output_policy(
                         }
                     } else {
                         let mut role = SRole::new(
-                            role_name,
+                            role_name.clone(),
                             Rc::<RefCell<SConfig>>::downgrade(&config),
                         );
-                        role._extra_fields.insert("purpose", role_name);
+                        role._extra_fields.insert("purpose".to_string(), serde_json::Value::String(role_name));
                         role.tasks.push(stask.clone());
                         conf.roles.push(Rc::new(RefCell::new(role)));
                     }
