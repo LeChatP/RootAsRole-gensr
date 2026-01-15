@@ -1,7 +1,8 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     ops::{BitOr, BitOrAssign},
-    rc::Weak,
+    rc::Rc,
     str::FromStr,
 };
 
@@ -10,13 +11,14 @@ use log::warn;
 use nix::unistd::{getgroups, getuid, Gid, Group, Uid, User};
 use rootasrole_core::{
     database::{
-        options::SAuthentication,
-        structs::{IdTask, SActorType, SCapabilities, SGroups, STask, SetBehavior},
+        actor::{SGroupType, SGroups},
+        options::{Opt, OptBuilder, SAuthentication},
+        structs::{SCapabilities, SCommands, SCredentials, STask, SetBehavior},
     },
     util::parse_capset_iter,
 };
 use serde::{ser::SerializeMap, Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::{
     capable::Capable,
@@ -123,17 +125,19 @@ impl Serialize for Policy {
             }
         }
         if let Some(setgid) = &self.setgid {
-            let groups: Vec<SActorType> = setgid
-                .iter()
-                .map(|g| {
-                    let gid = Gid::from_raw(*g);
-                    if let Ok(Some(group)) = Group::from_gid(gid) {
-                        SActorType::Name(group.name)
-                    } else {
-                        SActorType::Id(*g)
-                    }
-                })
-                .collect();
+            let groups: SGroups = SGroups::Multiple(
+                setgid
+                    .iter()
+                    .map(|g| {
+                        let gid = Gid::from_raw(*g);
+                        if let Ok(Some(group)) = Group::from_gid(gid) {
+                            SGroupType::from(group.name.as_str())
+                        } else {
+                            SGroupType::from(*g)
+                        }
+                    })
+                    .collect(),
+            );
             map.serialize_entry("setgid", &groups)?;
         }
         map.serialize_entry("capabilities", &self.capabilities)?;
@@ -232,24 +236,34 @@ impl Policy {
         remove_policy(&username, self)
     }
 
-    pub fn to_stask(&self, username: &str, task: Option<&str>) -> STask {
-        let mut stask = STask::new(
-            IdTask::Name(task.unwrap_or(username).to_string()),
-            Weak::new(),
-        );
-        stask.cred.setuid = Some(SActorType::Name(username.to_string()));
-        stask.cred.setgid = Some(SGroups::Single(SActorType::Name(username.to_string())));
-        stask.cred.capabilities = self.to_scapabilities();
-        stask
-            .cred
-            ._extra_fields
-            .insert("files".to_string(), self.to_sfiles());
-        stask
-            .cred
-            ._extra_fields
-            .insert("dbus".to_string(), self.to_sdbus());
-        stask.commands.default_behavior = Some(SetBehavior::All);
-        stask
+    pub fn to_stask(
+        &self,
+        username: &str,
+        task: Option<&str>,
+        opt: impl Fn(OptBuilder) -> Opt,
+        purpose: Option<String>,
+    ) -> Rc<RefCell<STask>> {
+        STask::builder(task.unwrap_or(username).to_string())
+            .options(opt)
+            .maybe_purpose(purpose)
+            .cred(
+                SCredentials::builder()
+                    .setuid(username)
+                    .setgid(username)
+                    .maybe_capabilities(self.to_scapabilities())
+                    .extra_fields(
+                        json!({
+                        "files": self.to_sfiles(),
+                        "dbus":  self.to_sdbus()
+                        })
+                        .as_object()
+                        .cloned()
+                        .unwrap(),
+                    )
+                    .build(),
+            )
+            .commands(SCommands::builder(SetBehavior::All).build())
+            .build()
     }
 
     fn to_scapabilities(&self) -> Option<SCapabilities> {

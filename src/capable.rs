@@ -21,7 +21,7 @@ pub(crate) struct Capable {
 
 impl Default for Capable {
     fn default() -> Self {
-        let tmp_file = Builder::new().keep(true).tempfile().unwrap();
+        let tmp_file = Builder::new().disable_cleanup(true).tempfile().unwrap();
         Capable {
             path: which::which("capable").ok(),
             previous_caps: CapSet::empty(),

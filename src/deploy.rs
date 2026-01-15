@@ -12,7 +12,7 @@ use std::{
 use log::debug;
 use nix::unistd::{Uid, User};
 use posix_acl::{PosixACL, ACL_EXECUTE, ACL_READ, ACL_WRITE};
-use rootasrole_core::database::structs::{SActorType, SConfig, SCredentials};
+use rootasrole_core::database::structs::{SConfig, SCredentials, SUserEither};
 use sxd_document::writer::format_document;
 
 use crate::policy::Policy;
@@ -340,14 +340,20 @@ pub(crate) fn remove_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Res
             let task = task.as_ref().borrow();
             let creds = &task.cred;
             match creds.setuid.as_ref() {
-                Some(SActorType::Name(username)) => {
-                    if username.starts_with("rar_") || username.starts_with("gsr_") {
-                        let user = User::from_name(username).unwrap().unwrap();
+                Some(SUserEither::MandatoryUser(username)) => {
+                    let s_username = username.as_str();
+                    if s_username.starts_with("rar_") || s_username.starts_with("gsr_") {
+                        let user = username.fetch_user().ok_or_else(|| {
+                            io::Error::new(
+                                io::ErrorKind::NotFound,
+                                format!("User {} not found", s_username),
+                            )
+                        })?;
                         polkit_policy
-                            .del_policy(username)
+                            .del_policy(&s_username)
                             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
                         remove_acl(creds, user)?;
-                        userdel(username)?;
+                        userdel(&s_username)?;
                     }
                 }
                 _ => {}
