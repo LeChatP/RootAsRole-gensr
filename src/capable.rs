@@ -97,7 +97,9 @@ impl Capable {
         self.failed = !cmd.status.success();
         // open the file and parse the policy
         let mut policy: Policy = serde_json::de::from_reader(self.tmp_file.as_file())?;
-        policy.current_user_creds();
+        if !policy.dbus.is_empty() {
+            policy.current_user_creds();
+        }
         self.ran = true;
         Ok(policy)
     }

@@ -8,7 +8,7 @@ use std::{
 
 use bitflags::bitflags;
 use log::warn;
-use nix::unistd::{getgroups, getuid, Gid, Group, Uid, User};
+use nix::{unistd::{Gid, Group, Uid, User, getgroups, getuid}};
 use rootasrole_core::{
     database::{
         actor::{SGroupType, SGroups},
@@ -102,9 +102,13 @@ impl<'de> Deserialize<'de> for Access {
 pub(crate) struct Policy {
     pub(crate) setuid: Option<u32>,
     pub(crate) setgid: Option<Vec<u32>>,
+    #[serde(default)]
     pub(crate) capabilities: Vec<String>,
+    #[serde(default)]
     pub(crate) files: HashMap<String, Access>,
+    #[serde(default)]
     pub(crate) dbus: Vec<String>,
+    #[serde(default)]
     pub(crate) env_vars: HashMap<String, String>,
     #[serde(default)]
     pub(crate) password_prompt: SAuthentication,
@@ -233,7 +237,7 @@ impl Policy {
     }
 
     pub(crate) fn remove(&self, username: &str) -> anyhow::Result<()> {
-        remove_policy(&username, self)
+        remove_policy(&username)
     }
 
     pub fn to_stask(
@@ -248,8 +252,8 @@ impl Policy {
             .maybe_purpose(purpose)
             .cred(
                 SCredentials::builder()
-                    .setuid(username)
-                    .setgid(username)
+                    .maybe_setuid(self.setuid.map(|_| username))
+                    .maybe_setgid(self.setgid.as_ref().map(|_| username))
                     .maybe_capabilities(self.to_scapabilities())
                     .extra_fields(
                         json!({

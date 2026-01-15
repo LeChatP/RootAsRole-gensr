@@ -318,9 +318,9 @@ pub(crate) fn setup_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Resu
         for task in &role.tasks {
             let task = task.as_ref().borrow();
             let username = format!("{}-{}", r_name, &task.name);
-            let user = useradd(&username)?;
+            let _ = useradd(&username)?;
             let cred = &task.cred;
-            deploy_acl(cred, user)?;
+            //deploy_acl(cred, user)?;
             deploy_dbus(cred, &mut builder, &username)?;
             deploy_polkit(cred, &username)?;
         }
@@ -343,7 +343,7 @@ pub(crate) fn remove_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Res
                 Some(SUserEither::MandatoryUser(username)) => {
                     let s_username = username.as_str();
                     if s_username.starts_with("rar_") || s_username.starts_with("gsr_") {
-                        let user = username.fetch_user().ok_or_else(|| {
+                        let _ = username.fetch_user().ok_or_else(|| {
                             io::Error::new(
                                 io::ErrorKind::NotFound,
                                 format!("User {} not found", s_username),
@@ -352,7 +352,7 @@ pub(crate) fn remove_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Res
                         polkit_policy
                             .del_policy(&s_username)
                             .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                        remove_acl(creds, user)?;
+                        //remove_acl(creds, user)?;
                         userdel(&s_username)?;
                     }
                 }
@@ -383,12 +383,12 @@ pub(crate) fn enforce_policy(username: &str, policy: &Policy) -> anyhow::Result<
     Ok(())
 }
 
-pub(crate) fn remove_policy(username: &str, policy: &Policy) -> anyhow::Result<()> {
-    let user = User::from_name(username)?
+pub(crate) fn remove_policy(username: &str/* , policy: &Policy*/) -> anyhow::Result<()> {
+    let _ = User::from_name(username)?
         .expect(format!("User {} wasn't created correctly", username).as_str());
-    for (path, _) in &policy.files {
-        del_acl(&user.uid, path)?;
-    }
+    //for (path, _) in &policy.files {
+    //    del_acl(&user.uid, path)?;
+    //}
     userdel(username)?;
     let dbus_policy_file = DBusPolicyBuilder::new().rootasrole_folder();
     if dbus_policy_file.join(format!("{}.conf", username)).exists() {
