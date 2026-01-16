@@ -306,13 +306,6 @@ fn set_acl<P: AsRef<Path>>(user: &Uid, path: P, permissions: &str) -> anyhow::Re
     Ok(())
 }
 
-fn del_acl<P: AsRef<Path>>(user: &Uid, path: P) -> anyhow::Result<()> {
-    let mut acl = PosixACL::read_acl(&path)?;
-    acl.remove(posix_acl::Qualifier::User(user.as_raw()));
-    acl.write_acl(&path)?;
-    Ok(())
-}
-
 pub(crate) fn setup_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Result<()> {
     let mut builder = DBusPolicyBuilder::new();
     for role in &config.as_ref().borrow().roles {
@@ -478,39 +471,6 @@ fn deploy_polkit(cred: &SCredentials, username: &str) -> io::Result<()> {
                 .map(|v| v.as_str().unwrap())
                 .collect();
             worker.add_policy(&username, &permissions)?;
-        }
-    }
-    Ok(())
-}
-
-fn deploy_acl(cred: &SCredentials, user: User) -> Result<(), Error> {
-    if let Some(files) = cred
-        ._extra_fields
-        .get("files")
-        .map(|value| value.as_object())
-        .flatten()
-    {
-        for (path, permission) in files {
-            let file_path = path.as_str();
-            let permission = permission.as_str().unwrap();
-            set_acl(&user.uid, file_path, permission)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-        }
-    }
-    Ok(())
-}
-
-fn remove_acl(cred: &SCredentials, user: User) -> Result<(), Error> {
-    if let Some(files) = cred
-        ._extra_fields
-        .get("files")
-        .map(|value| value.as_object())
-        .flatten()
-    {
-        for (path, _) in files {
-            let file_path = path.as_str();
-            del_acl(&user.uid, file_path)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
         }
     }
     Ok(())
