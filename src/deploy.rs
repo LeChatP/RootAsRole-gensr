@@ -11,7 +11,7 @@ use std::{
 
 use log::debug;
 use nix::unistd::{Uid, User};
-use posix_acl::{PosixACL, ACL_EXECUTE, ACL_READ, ACL_WRITE};
+use posix_acl::{ACL_EXECUTE, ACL_READ, ACL_WRITE, PosixACL};
 use rootasrole_core::database::structs::{SConfig, SCredentials, SUserEither};
 use sxd_document::writer::format_document;
 
@@ -192,7 +192,10 @@ fn resolve_config_dir(
             if second_dir.is_dir() {
                 return Ok(second_dir);
             }
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Cannot find dbus policy folder location, please use DBUS_CONF_DIR env variable to specify the location"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Cannot find dbus policy folder location, please use DBUS_CONF_DIR env variable to specify the location",
+            ));
         }
     }
 }
@@ -383,7 +386,7 @@ pub(crate) fn enforce_policy(username: &str, policy: &Policy) -> anyhow::Result<
     Ok(())
 }
 
-pub(crate) fn remove_policy(username: &str/* , policy: &Policy*/) -> anyhow::Result<()> {
+pub(crate) fn remove_policy(username: &str /* , policy: &Policy*/) -> anyhow::Result<()> {
     let _ = User::from_name(username)?
         .expect(format!("User {} wasn't created correctly", username).as_str());
     //for (path, _) in &policy.files {

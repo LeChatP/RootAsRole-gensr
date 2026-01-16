@@ -8,7 +8,7 @@ use std::{
 
 use bitflags::bitflags;
 use log::warn;
-use nix::{unistd::{Gid, Group, Uid, User, getgroups, getuid}};
+use nix::unistd::{Gid, Group, Uid, User, getgroups, getuid};
 use rootasrole_core::{
     database::{
         actor::{SGroupType, SGroups},
@@ -17,8 +17,8 @@ use rootasrole_core::{
     },
     util::parse_capset_iter,
 };
-use serde::{ser::SerializeMap, Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde::{Deserialize, Serialize, ser::SerializeMap};
+use serde_json::{Map, Value, json};
 
 use crate::{
     capable::Capable,

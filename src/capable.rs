@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use bon::bon;
-use capctl::{bounding, CapSet};
+use capctl::{CapSet, bounding};
 use log::debug;
 use tempfile::{Builder, NamedTempFile};
 
