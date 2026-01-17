@@ -10,8 +10,7 @@ use std::{
 };
 
 use log::debug;
-use nix::unistd::{Uid, User};
-use posix_acl::{ACL_EXECUTE, ACL_READ, ACL_WRITE, PosixACL};
+use nix::unistd::User;
 use rootasrole_core::database::structs::{SConfig, SCredentials, SUserEither};
 use sxd_document::writer::format_document;
 
@@ -274,38 +273,6 @@ impl PolkitPolicyWorker {
     }
 }
 
-fn str_to_permission(perm: &str) -> anyhow::Result<u32> {
-    let mut perms = 0;
-    for c in perm.chars() {
-        match c {
-            'r' | 'R' => perms |= ACL_READ,
-            'w' | 'W' => perms |= ACL_WRITE,
-            'x' | 'X' => perms |= ACL_EXECUTE,
-            _ => return Err(anyhow::anyhow!("Invalid permission")),
-        }
-    }
-    return Ok(perms);
-}
-
-fn set_acl<P: AsRef<Path>>(user: &Uid, path: P, permissions: &str) -> anyhow::Result<()> {
-    debug!(
-        "Setting {} ACL for user {} on path {}",
-        permissions,
-        user,
-        path.as_ref().display()
-    );
-    let mut acl = PosixACL::read_acl(&path)?;
-    let current = acl
-        .get(posix_acl::Qualifier::User(user.as_raw()))
-        .unwrap_or(0);
-    acl.set(
-        posix_acl::Qualifier::User(user.as_raw()),
-        current | str_to_permission(permissions)?,
-    );
-    acl.write_acl(&path)?;
-    Ok(())
-}
-
 pub(crate) fn setup_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Result<()> {
     let mut builder = DBusPolicyBuilder::new();
     for role in &config.as_ref().borrow().roles {
@@ -360,10 +327,6 @@ pub(crate) fn remove_role_based_access(config: &Rc<RefCell<SConfig>>) -> io::Res
 }
 //
 pub(crate) fn enforce_policy(username: &str, policy: &Policy) -> anyhow::Result<()> {
-    let user = useradd(username)?;
-    for (path, permission) in &policy.files {
-        set_acl(&user.uid, path, &permission.to_string())?;
-    }
     let dbus_vec = policy
         .dbus
         .iter()
