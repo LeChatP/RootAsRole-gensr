@@ -3,18 +3,19 @@ use std::{
     io,
     path::{Path, PathBuf},
     rc::Rc,
+    str::FromStr,
 };
 
 use bon::builder;
 use clap::{Parser, Subcommand, ValueEnum};
-use log::{LevelFilter, debug, warn};
+use log::{LevelFilter, debug};
 use nix::unistd::{Gid, Uid, setgid, setgroups, setuid};
-use policy::Policy;
+use policy::{Access, Policy};
 use rootasrole_core::{
     FullSettings, RemoteStorageSettings, SettingsContent, StorageMethod,
     database::{
         options::{EnvBehavior, SAuthentication, SEnvOptions},
-        structs::{SConfig, SRole},
+        structs::{SCapabilities, SConfig, SRole},
         versionning::Versioning,
     },
 };
@@ -252,18 +253,94 @@ fn output_policy(
                             stask.as_ref().borrow().name,
                             role_name
                         );
-                        if role
+                        let existing_task_opt = role
                             .as_ref()
-                            .borrow_mut()
+                            .borrow()
                             .tasks
                             .iter()
-                            .any(|t| t.as_ref().borrow().name == stask.as_ref().borrow().name)
-                        {
-                            warn!(
-                                "Task '{}' already exists in role '{}'",
+                            .find(|t| t.as_ref().borrow().name == stask.as_ref().borrow().name)
+                            .cloned();
+
+                        if let Some(existing_task) = existing_task_opt {
+                            debug!(
+                                "Task '{}' already exists in role '{}', merging...",
                                 stask.as_ref().borrow().name,
                                 username
                             );
+                            // join credentials and extra fields
+                            let stask_borrow = stask.as_ref().borrow();
+                            let mut existing_task_borrow = existing_task.as_ref().borrow_mut();
+
+                            // Merge capabilities
+                            if let Some(new_caps) = &stask_borrow.cred.capabilities {
+                                if let Some(existing_caps) =
+                                    &mut existing_task_borrow.cred.capabilities
+                                {
+                                    existing_caps.add.extend(new_caps.add.iter());
+                                } else {
+                                    let mut caps = SCapabilities::default();
+                                    caps.default_behavior = new_caps.default_behavior;
+                                    caps.add.extend(new_caps.add.iter());
+                                    existing_task_borrow.cred.capabilities = Some(caps);
+                                }
+                            }
+
+                            // Merge files
+                            if let Some(new_files) = stask_borrow
+                                .cred
+                                ._extra_fields
+                                .get("files")
+                                .and_then(|v| v.as_object())
+                            {
+                                let existing_files_val = existing_task_borrow
+                                    .cred
+                                    ._extra_fields
+                                    .entry("files".to_string())
+                                    .or_insert(json!({}));
+                                if let serde_json::Value::Object(existing_files) = existing_files_val
+                                {
+                                    for (file, rights_val) in new_files {
+                                        let new_access =
+                                            Access::from_str(rights_val.as_str().unwrap_or(""))
+                                                .unwrap_or(Access::empty());
+
+                                        let existing_access_str = existing_files
+                                            .get(file.as_str())
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        let existing_access =
+                                            Access::from_str(existing_access_str)
+                                                .unwrap_or(Access::empty());
+
+                                        let merged_access = existing_access | new_access;
+                                        existing_files.insert(
+                                            file.clone(),
+                                            serde_json::Value::String(merged_access.to_string()),
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Merge DBus
+                            if let Some(new_dbus) = stask_borrow
+                                .cred
+                                ._extra_fields
+                                .get("dbus")
+                                .and_then(|v| v.as_array())
+                            {
+                                let existing_dbus_val = existing_task_borrow
+                                    .cred
+                                    ._extra_fields
+                                    .entry("dbus".to_string())
+                                    .or_insert(json!([]));
+                                if let serde_json::Value::Array(existing_dbus) = existing_dbus_val {
+                                    for d in new_dbus {
+                                        if !existing_dbus.contains(d) {
+                                            existing_dbus.push(d.clone());
+                                        }
+                                    }
+                                }
+                            }
                         } else {
                             debug!(
                                 "Creating new task '{}' in role '{}'",
